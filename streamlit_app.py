@@ -1,19 +1,14 @@
 import streamlit as st
 import requests
-import json
-import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from openai import OpenAI
 import os
-import pandas as pd
-import plotly.express as px
 
 # Configuração da página
 st.set_page_config(
     page_title="Smart Clima - Assistente de Conforto Térmico",
     page_icon="🌡️",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    layout="wide"
 )
 
 # Em produção, essas chaves virão das secrets do Streamlit
@@ -38,9 +33,6 @@ if 'user_preferences' not in st.session_state:
         'home_schedule': ['08:00', '18:00'],
         'car_usage': ['07:30', '17:30']
     }
-
-if 'forecast_data' not in st.session_state:
-    st.session_state.forecast_data = None
 
 # Função para obter as coordenadas a partir do CEP
 def cep_para_lat_lon(cep):
@@ -67,8 +59,6 @@ def get_weather(latitude, longitude):
             "cidade": data["location"]["name"],
             "pais": data["location"]["country"],
             "sensacao": data["current"]["feelslike_c"],
-            "qualidade_ar": data["current"].get("air_quality", {}).get("us-epa-index", 0),
-            "icone": data["current"]["condition"]["icon"],
             "ultima_atualizacao": data["current"]["last_updated"]
         }
     return {"erro": "Não foi possível obter os dados do clima."}
@@ -96,7 +86,6 @@ def get_forecast(latitude, longitude):
                 "hora": hour_time.strftime("%H:%M"),
                 "temperatura": hour_data["temp_c"],
                 "descricao": hour_data["condition"]["text"],
-                "icone": hour_data["condition"]["icon"],
                 "umidade": hour_data["humidity"],
                 "vento_kmh": hour_data["wind_kph"],
                 "sensacao": hour_data["feelslike_c"],
@@ -174,29 +163,6 @@ def save_location(cidade, latitude, longitude):
     if len(st.session_state.last_locations) > 5:
         st.session_state.last_locations = st.session_state.last_locations[:5]
 
-# Função para criar gráfico de temperatura
-def create_temp_chart(forecast_data):
-    df = pd.DataFrame([
-        {
-            'Hora': h['hora'], 
-            'Temperatura (°C)': h['temperatura'],
-            'Sensação Térmica (°C)': h['sensacao']
-        } for h in forecast_data
-    ])
-    
-    fig = px.line(df, x='Hora', y=['Temperatura (°C)', 'Sensação Térmica (°C)'],
-                  title='Previsão de Temperatura',
-                  markers=True,
-                  color_discrete_sequence=['#FF9900', '#FF5555'])
-    
-    fig.update_layout(
-        height=300,
-        margin=dict(l=10, r=10, t=50, b=30),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-    )
-    
-    return fig
-
 # Estilo personalizado via CSS
 st.markdown("""
 <style>
@@ -219,69 +185,33 @@ st.markdown("""
         border-radius: 0.5rem;
         margin-bottom: 1rem;
     }
-    .weather-card {
-        background-color: rgba(66, 135, 245, 0.1);
-        border-radius: 1rem;
-        padding: 1.5rem;
-        margin-bottom: 1rem;
-        border: 1px solid rgba(66, 135, 245, 0.3);
-    }
-    .forecast-item {
-        display: inline-block;
-        text-align: center;
-        margin-right: 1rem;
-        background-color: rgba(245, 245, 245, 0.7);
-        padding: 0.5rem;
-        border-radius: 0.5rem;
-        width: 100px;
-    }
     .current-temp {
         font-size: 3rem;
         font-weight: bold;
         color: #1E88E5;
     }
-    .temp-feels {
-        font-size: 1.2rem;
-        color: #757575;
-    }
-    .forecast-temp {
-        font-size: 1.5rem;
-        font-weight: bold;
-    }
     .weather-desc {
         font-size: 1.2rem;
         margin-bottom: 1rem;
-    }
-    .button-primary {
-        background-color: #FF9900;
-        color: white;
-    }
-    .history-item {
-        cursor: pointer;
-        padding: 0.5rem;
-        border-radius: 0.3rem;
-        margin-bottom: 0.5rem;
-        background-color: rgba(245, 245, 245, 0.5);
-    }
-    .history-item:hover {
-        background-color: rgba(66, 135, 245, 0.2);
     }
 </style>
 """, unsafe_allow_html=True)
 
 # Layout principal
-col1, col2 = st.columns([2, 3])
+st.markdown("<h1 class='main-header'>Smart Clima</h1>", unsafe_allow_html=True)
+st.markdown("### Assistente de Conforto Térmico")
+
+# Layout em duas colunas
+col1, col2 = st.columns([1, 2])
 
 with col1:
-    st.markdown("<h1 class='main-header'>Smart Clima</h1>", unsafe_allow_html=True)
-    st.markdown("### Assistente de Conforto Térmico")
-    
     # Entrada de localização
     st.markdown("#### Localização")
     
-    loc_tab1, loc_tab2, loc_tab3 = st.tabs(["CEP", "Coordenadas", "Histórico"])
+    # Abas para diferentes métodos de entrada
+    tab1, tab2, tab3 = st.tabs(["CEP", "Coordenadas", "Histórico"])
     
-    with loc_tab1:
+    with tab1:
         cep = st.text_input("CEP (somente números)", placeholder="Ex: 01310100")
         if st.button("Buscar por CEP", use_container_width=True):
             if cep:
@@ -308,7 +238,7 @@ with col1:
             else:
                 st.warning("Informe um CEP válido.")
     
-    with loc_tab2:
+    with tab2:
         latitude = st.text_input("Latitude", placeholder="Ex: -23.550520")
         longitude = st.text_input("Longitude", placeholder="Ex: -46.633308")
         if st.button("Buscar por Coordenadas", use_container_width=True):
@@ -330,7 +260,7 @@ with col1:
             else:
                 st.warning("Informe coordenadas válidas.")
     
-    with loc_tab3:
+    with tab3:
         st.markdown("#### Localizações recentes")
         if len(st.session_state.last_locations) > 0:
             for idx, loc in enumerate(st.session_state.last_locations):
@@ -350,8 +280,8 @@ with col1:
                             st.error(clima["erro"])
         else:
             st.info("Nenhuma localização no histórico.")
-    
-    # Botão para usar geolocalização (simulado, pois requer JavaScript)
+            
+    # Botão para usar geolocalização (simulado)
     st.markdown("#### Usar localização atual")
     if st.button("📍 Detectar minha localização", use_container_width=True):
         st.info("Esta funcionalidade requer JavaScript. Estamos simulando para demonstração.")
@@ -410,10 +340,6 @@ with col1:
             car_start.strftime("%H:%M"),
             car_end.strftime("%H:%M")
         ]
-        
-        st.markdown("#### Economia de energia")
-        eco_mode = st.toggle("Priorizar economia de energia", value=True)
-        st.session_state.user_preferences['eco_mode'] = eco_mode
 
 # Coluna para exibição de resultados
 with col2:
@@ -425,52 +351,33 @@ with col2:
         st.markdown(f"<h2 class='sub-header'>Clima em {clima['cidade']}, {clima['pais']}</h2>", unsafe_allow_html=True)
         
         # Card com clima atual
-        with st.container():
-            st.markdown("<div class='weather-card'>", unsafe_allow_html=True)
-            
-            col_temp, col_details = st.columns([1, 2])
-            
-            with col_temp:
-                st.markdown(f"<div class='current-temp'>{clima['temperatura']}°C</div>", unsafe_allow_html=True)
-                st.markdown(f"<div class='temp-feels'>Sensação: {clima['sensacao']}°C</div>", unsafe_allow_html=True)
-                st.markdown(f"<div class='weather-desc'>{clima['descricao']}</div>", unsafe_allow_html=True)
-            
-            with col_details:
-                col_d1, col_d2, col_d3 = st.columns(3)
-                with col_d1:
-                    st.metric("Umidade", f"{clima['umidade']}%")
-                with col_d2:
-                    st.metric("Vento", f"{clima['vento_kmh']} km/h")
-                with col_d3:
-                    # Qualidade do ar (0-6, sendo 0 bom e 6 perigoso)
-                    qa_value = clima.get('qualidade_ar', 0)
-                    qa_label = "Boa"
-                    if qa_value > 3:
-                        qa_label = "Moderada"
-                    if qa_value > 4:
-                        qa_label = "Ruim"
-                    if qa_value > 5:
-                        qa_label = "Perigosa"
-                    st.metric("Qualidade do Ar", qa_label)
-                
-                st.markdown(f"Atualizado em: {clima['ultima_atualizacao']}")
-            
-            st.markdown("</div>", unsafe_allow_html=True)
+        col_temp, col_details = st.columns([1, 2])
         
-        # Gráfico de temperatura para as próximas horas
+        with col_temp:
+            st.markdown(f"<div class='current-temp'>{clima['temperatura']}°C</div>", unsafe_allow_html=True)
+            st.markdown(f"<div>Sensação: {clima['sensacao']}°C</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='weather-desc'>{clima['descricao']}</div>", unsafe_allow_html=True)
+        
+        with col_details:
+            col_d1, col_d2 = st.columns(2)
+            with col_d1:
+                st.metric("Umidade", f"{clima['umidade']}%")
+            with col_d2:
+                st.metric("Vento", f"{clima['vento_kmh']} km/h")
+            
+            st.markdown(f"Atualizado em: {clima['ultima_atualizacao']}")
+        
+        # Previsão para as próximas horas (simplificada)
         st.markdown("<h3 class='sub-header'>Previsão para as próximas horas</h3>", unsafe_allow_html=True)
-        fig = create_temp_chart(forecast)
-        st.plotly_chart(fig, use_container_width=True)
         
-        # Detalhes da previsão por hora
+        # Detalhes da previsão por hora (simplificado)
         forecast_cols = st.columns(4)
         for i, hour in enumerate(forecast[:4]):  # Mostra as próximas 4 horas
             with forecast_cols[i]:
-                st.markdown(f"<div style='text-align: center;'><b>{hour['hora']}</b></div>", unsafe_allow_html=True)
-                st.markdown(f"<div style='text-align: center;'>{hour['temperatura']}°C</div>", unsafe_allow_html=True)
-                st.markdown(f"<div style='text-align: center;'>{hour['descricao']}</div>", unsafe_allow_html=True)
+                st.markdown(f"<b>{hour['hora']}</b>: {hour['temperatura']}°C", unsafe_allow_html=True)
+                st.write(f"{hour['descricao']}")
                 if hour['chance_chuva'] > 0:
-                    st.markdown(f"<div style='text-align: center; color: blue;'>🌧️ {hour['chance_chuva']}%</div>", unsafe_allow_html=True)
+                    st.write(f"🌧️ {hour['chance_chuva']}% chance de chuva")
         
         # Interpretação do clima usando GPT
         st.markdown("<h3 class='sub-header'>Recomendações Personalizadas</h3>", unsafe_allow_html=True)
@@ -486,16 +393,6 @@ with col2:
             st.markdown("<div class='recommendation-box'>", unsafe_allow_html=True)
             st.markdown(st.session_state.recomendacoes.replace('\n', '<br>'), unsafe_allow_html=True)
             st.markdown("</div>", unsafe_allow_html=True)
-            
-            # Opções para feedback (simuladas)
-            st.markdown("#### Esta recomendação foi útil?")
-            col_fb1, col_fb2, col_fb3 = st.columns([1, 1, 3])
-            with col_fb1:
-                if st.button("👍 Sim"):
-                    st.success("Obrigado pelo feedback! Continuaremos melhorando as recomendações.")
-            with col_fb2:
-                if st.button("👎 Não"):
-                    st.info("Agradecemos seu feedback. Ajustaremos as recomendações futuras.")
     
     # Mensagem inicial quando não há dados
     elif 'clima' not in st.session_state:
