@@ -41,7 +41,7 @@ def get_weather(latitude, longitude):
     return {"erro": "Não foi possível obter os dados do clima."}
 
 def interpretar_clima(weather_data):
-    prompt = f"""Você é um assistente especialista em conforto térmico. Dê conselhos precisos sem usar "talvez", "pode ser", ou "considere".
+    prompt = f"""Você é um assistente especialista em conforto térmico e saúde. Dê conselhos precisos sem usar "talvez", "pode ser", ou "considere".
 
 CLIMA ATUAL: {weather_data['temperatura']}°C, sensação térmica de {weather_data['sensacao']}°C. 
 Condição: {weather_data['descricao']}. Umidade: {weather_data['umidade']}%. Vento: {weather_data['vento_kmh']} km/h.
@@ -50,8 +50,12 @@ FORNEÇA:
 1. ROUPAS RECOMENDADAS: Exatamente o que vestir agora para este clima.
 2. AR-CONDICIONADO EM CASA: Temperatura EXATA recomendada para o ar-condicionado.
 3. AR-CONDICIONADO NO CARRO: Temperatura EXATA recomendada e se deve usar recirculação ou ar externo.
+4. RECOMENDAÇÕES PARA BEBÊS: Indique precisamente:
+   - Como vestir um bebê neste clima (número de camadas, tipos de tecidos)
+   - Temperatura EXATA ideal do ar-condicionado para ambientes com bebês
+   - Cuidados específicos relacionados à umidade e ventilação para bebês neste clima
 
-Use frases diretas e comandos curtos. Divida a resposta claramente em seções numeradas (1, 2, 3)."""
+Use frases diretas e comandos curtos. Divida a resposta claramente em seções numeradas (1, 2, 3, 4)."""
 
     resposta = client.chat.completions.create(
         model="gpt-3.5-turbo",
@@ -132,4 +136,4 @@ if 'clima' in st.session_state:
             st.session_state.recomendacoes = recomendacoes
     
     if 'recomendacoes' in st.session_state:
-        st.write(st.session_state.recomendacoes)
+        st.markdown(st.session_state.recomendacoes)
