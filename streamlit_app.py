@@ -202,10 +202,10 @@ def validate_cep(cep):
     return None
 
 def cep_para_coordenadas_fallback(cep):
-    """Converte CEP para coordenadas usando múltiplas APIs"""
+    """Converte CEP para coordenadas usando múltiplas APIs e retorna endereço completo"""
     cep_clean = validate_cep(cep)
     if not cep_clean:
-        return None, None, "CEP inválido. Use formato: 12345678"
+        return None, None, None, "CEP inválido. Use formato: 12345678"
     
     # Tenta cada API de CEP
     for i, api_url in enumerate(CEP_APIS):
@@ -218,39 +218,93 @@ def cep_para_coordenadas_fallback(cep):
                 continue
             
             data = response.json()
+            endereco_info = {}
             
             # Processa diferentes formatos de resposta
             if 'viacep' in url:
                 if "erro" in data:
                     continue
-                cidade = data.get("localidade")
-                uf = data.get("uf")
+                endereco_info = {
+                    'rua': data.get("logradouro", ""),
+                    'bairro': data.get("bairro", ""),
+                    'cidade': data.get("localidade", ""),
+                    'uf': data.get("uf", ""),
+                    'cep': data.get("cep", ""),
+                    'complemento': data.get("complemento", ""),
+                    'ddd': data.get("ddd", "")
+                }
             elif 'brasilapi' in url:
                 if not data.get("city"):
                     continue
-                cidade = data.get("city")
-                uf = data.get("state")
+                endereco_info = {
+                    'rua': data.get("street", ""),
+                    'bairro': data.get("neighborhood", ""),
+                    'cidade': data.get("city", ""),
+                    'uf': data.get("state", ""),
+                    'cep': cep_clean,
+                    'complemento': "",
+                    'ddd': ""
+                }
             elif 'awesomeapi' in url:
                 if data.get("status") == 400:
                     continue
-                cidade = data.get("city")
-                uf = data.get("state")
+                endereco_info = {
+                    'rua': data.get("address", ""),
+                    'bairro': data.get("district", ""),
+                    'cidade': data.get("city", ""),
+                    'uf': data.get("state", ""),
+                    'cep': cep_clean,
+                    'complemento': "",
+                    'ddd': data.get("ddd", "")
+                }
             else:
                 continue
             
-            if cidade and uf:
+            if endereco_info.get('cidade') and endereco_info.get('uf'):
                 # Converte para coordenadas usando dados geográficos
-                coordenadas = cidade_para_coordenadas(cidade, uf)
+                coordenadas = cidade_para_coordenadas(endereco_info['cidade'], endereco_info['uf'])
                 if coordenadas:
-                    return coordenadas[0], coordenadas[1], None
+                    return coordenadas[0], coordenadas[1], endereco_info, None
         
         except Exception as e:
             st.warning(f"⚠️ API {i+1} falhou: {str(e)}")
             continue
     
-    return None, None, "Não foi possível obter coordenadas do CEP usando nenhuma API"
+    return None, None, None, "Não foi possível obter coordenadas do CEP usando nenhuma API"
 
-def cidade_para_coordenadas(cidade, uf):
+def formatar_endereco(endereco_info):
+    """Formata o endereço de forma elegante"""
+    if not endereco_info:
+        return ""
+    
+    endereco_parts = []
+    
+    # Rua
+    if endereco_info.get('rua'):
+        endereco_parts.append(endereco_info['rua'])
+    
+    # Bairro
+    if endereco_info.get('bairro'):
+        endereco_parts.append(endereco_info['bairro'])
+    
+    # Cidade e UF
+    cidade_uf = []
+    if endereco_info.get('cidade'):
+        cidade_uf.append(endereco_info['cidade'])
+    if endereco_info.get('uf'):
+        cidade_uf.append(endereco_info['uf'])
+    
+    if cidade_uf:
+        endereco_parts.append(" - ".join(cidade_uf))
+    
+    # CEP
+    if endereco_info.get('cep'):
+        cep_formatado = endereco_info['cep']
+        if len(cep_formatado) == 8:
+            cep_formatado = f"{cep_formatado[:5]}-{cep_formatado[5:]}"
+        endereco_parts.append(f"CEP: {cep_formatado}")
+    
+    return " | ".join(endereco_parts)
     """Converte cidade/UF para coordenadas usando dados estáticos"""
     # Coordenadas principais do Brasil para fallback
     coordenadas_cidades = {
@@ -579,7 +633,7 @@ def main():
     # Processamento CEP
     if search_cep and cep:
         with st.spinner("🔍 Buscando localização via CEP..."):
-            lat, lon, error = cep_para_coordenadas_fallback(cep)
+            lat, lon, endereco_info, error = cep_para_coordenadas_fallback(cep)
             
             if error:
                 st.markdown(f'<div class="error-message">❌ {error}</div>', unsafe_allow_html=True)
@@ -594,10 +648,30 @@ def main():
                 </div>
                 """, unsafe_allow_html=True)
             else:
-                st.markdown(f'<div class="success-message">✅ Coordenadas encontradas: {lat}, {lon}</div>', unsafe_allow_html=True)
+                # Exibe o endereço encontrado
+                if endereco_info:
+                    endereco_formatado = formatar_endereco(endereco_info)
+                    st.markdown(f"""
+                    <div class="success-message">
+                        <h4>✅ Endereço encontrado:</h4>
+                        <p><strong>{endereco_formatado}</strong></p>
+                        <p>Coordenadas: {lat}, {lon}</p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                else:
+                    st.markdown(f'<div class="success-message">✅ Coordenadas encontradas: {lat}, {lon}</div>', unsafe_allow_html=True)
                 
                 with st.spinner("🌤️ Obtendo dados do clima..."):
                     clima = get_weather_fallback(lat, lon)
+                    
+                    # Adiciona informações do endereço ao clima
+                    if endereco_info:
+                        clima["endereco"] = endereco_info
+                        clima["endereco_formatado"] = endereco_formatado
+                        # Usa o nome da cidade do CEP se disponível
+                        if endereco_info.get('cidade'):
+                            clima["cidade"] = endereco_info['cidade']
+                    
                     st.session_state.clima = clima
                     st.session_state.coordenadas = (lat, lon)
                     st.rerun()
@@ -642,13 +716,34 @@ def main():
             </div>
             """, unsafe_allow_html=True)
         
-        # Card do clima
-        st.markdown(f"""
-        <div class="weather-card">
-            <h2>🌤️ Clima em {clima['cidade']}, {clima['pais']}</h2>
-            <p>Última atualização: {clima['timestamp']}</p>
-        </div>
-        """, unsafe_allow_html=True)
+        # Card do clima com endereço
+        clima_header = f"🌤️ Clima em {clima['cidade']}, {clima['pais']}"
+        
+        # Se tiver endereço do CEP, exibe informações mais detalhadas
+        if clima.get('endereco'):
+            endereco_info = clima['endereco']
+            clima_header = f"🌤️ Clima em {clima['cidade']}, {clima['pais']}"
+            
+            st.markdown(f"""
+            <div class="weather-card">
+                <h2>{clima_header}</h2>
+                <div style="background: rgba(255,255,255,0.1); padding: 1rem; border-radius: 8px; margin: 1rem 0;">
+                    <h4>📍 Endereço Completo:</h4>
+                    <p><strong>{clima.get('endereco_formatado', '')}</strong></p>
+                    {f"<p>🏠 <strong>Rua:</strong> {endereco_info.get('rua', 'Não disponível')}</p>" if endereco_info.get('rua') else ""}
+                    {f"<p>🏘️ <strong>Bairro:</strong> {endereco_info.get('bairro', 'Não disponível')}</p>" if endereco_info.get('bairro') else ""}
+                    {f"<p>📞 <strong>DDD:</strong> {endereco_info.get('ddd', 'Não disponível')}</p>" if endereco_info.get('ddd') else ""}
+                </div>
+                <p>Última atualização: {clima['timestamp']}</p>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown(f"""
+            <div class="weather-card">
+                <h2>{clima_header}</h2>
+                <p>Última atualização: {clima['timestamp']}</p>
+            </div>
+            """, unsafe_allow_html=True)
         
         # Métricas do clima
         col1, col2, col3, col4 = st.columns(4)
@@ -695,9 +790,13 @@ def main():
             st.markdown(st.session_state.recomendacoes)
             
             # Botão para salvar recomendações
+            endereco_completo = ""
+            if clima.get('endereco_formatado'):
+                endereco_completo = f"**Endereço:** {clima['endereco_formatado']}\n"
+            
             st.download_button(
                 label="💾 Salvar Recomendações",
-                data=f"# Recomendações Smart Clima\n\n**Local:** {clima['cidade']}, {clima['pais']}\n**Data:** {datetime.now().strftime('%d/%m/%Y %H:%M')}\n**Temperatura:** {clima['temperatura']}°C\n**Modo:** {'Offline' if clima.get('fallback', False) else 'Online'}\n\n{st.session_state.recomendacoes}",
+                data=f"# Recomendações Smart Clima\n\n**Local:** {clima['cidade']}, {clima['pais']}\n{endereco_completo}**Data:** {datetime.now().strftime('%d/%m/%Y %H:%M')}\n**Temperatura:** {clima['temperatura']}°C\n**Modo:** {'Offline' if clima.get('fallback', False) else 'Online'}\n\n{st.session_state.recomendacoes}",
                 file_name=f"recomendacoes_clima_{datetime.now().strftime('%Y%m%d_%H%M')}.md",
                 mime="text/markdown"
             )
