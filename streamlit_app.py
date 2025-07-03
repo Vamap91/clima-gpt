@@ -207,6 +207,10 @@ def cep_para_coordenadas_fallback(cep):
     if not cep_clean:
         return None, None, None, "CEP inválido. Use formato: 12345678"
     
+    # Contador de tentativas
+    tentativas_sucessos = 0
+    ultimo_erro = ""
+    
     # Tenta cada API de CEP
     for i, api_url in enumerate(CEP_APIS):
         try:
@@ -215,6 +219,7 @@ def cep_para_coordenadas_fallback(cep):
             
             response = safe_request(url)
             if not response:
+                ultimo_erro = f"API {i+1}: Erro de conexão"
                 continue
             
             data = response.json()
@@ -223,6 +228,7 @@ def cep_para_coordenadas_fallback(cep):
             # Processa diferentes formatos de resposta
             if 'viacep' in url:
                 if "erro" in data:
+                    ultimo_erro = f"API {i+1}: CEP não encontrado"
                     continue
                 endereco_info = {
                     'rua': data.get("logradouro", ""),
@@ -235,6 +241,7 @@ def cep_para_coordenadas_fallback(cep):
                 }
             elif 'brasilapi' in url:
                 if not data.get("city"):
+                    ultimo_erro = f"API {i+1}: Dados incompletos"
                     continue
                 endereco_info = {
                     'rua': data.get("street", ""),
@@ -247,6 +254,7 @@ def cep_para_coordenadas_fallback(cep):
                 }
             elif 'awesomeapi' in url:
                 if data.get("status") == 400:
+                    ultimo_erro = f"API {i+1}: CEP inválido"
                     continue
                 endereco_info = {
                     'rua': data.get("address", ""),
@@ -258,19 +266,85 @@ def cep_para_coordenadas_fallback(cep):
                     'ddd': data.get("ddd", "")
                 }
             else:
+                ultimo_erro = f"API {i+1}: Formato não reconhecido"
                 continue
             
-            if endereco_info.get('cidade') and endereco_info.get('uf'):
-                # Converte para coordenadas usando dados geográficos
-                coordenadas = cidade_para_coordenadas(endereco_info['cidade'], endereco_info['uf'])
-                if coordenadas:
-                    return coordenadas[0], coordenadas[1], endereco_info, None
-        
+            # Verifica se temos dados mínimos
+            if not endereco_info.get('cidade') or not endereco_info.get('uf'):
+                ultimo_erro = f"API {i+1}: Dados incompletos (cidade/UF)"
+                continue
+            
+            # Sucesso! Agora converte para coordenadas
+            tentativas_sucessos += 1
+            st.success(f"✅ API {i+1} funcionou! Dados obtidos com sucesso.")
+            
+            coordenadas = cidade_para_coordenadas(endereco_info['cidade'], endereco_info['uf'])
+            if coordenadas:
+                return coordenadas[0], coordenadas[1], endereco_info, None
+            else:
+                ultimo_erro = f"API {i+1}: Coordenadas não encontradas para {endereco_info['cidade']}"
+                continue
+                
+        except json.JSONDecodeError:
+            ultimo_erro = f"API {i+1}: Erro ao processar resposta JSON"
+            st.warning(f"⚠️ API {i+1} falhou: Resposta inválida")
+            continue
         except Exception as e:
+            ultimo_erro = f"API {i+1}: {str(e)}"
             st.warning(f"⚠️ API {i+1} falhou: {str(e)}")
             continue
     
-    return None, None, None, "Não foi possível obter coordenadas do CEP usando nenhuma API"
+    # Se chegou aqui, nenhuma API funcionou
+    if tentativas_sucessos == 0:
+        erro_msg = f"Nenhuma API de CEP funcionou. Último erro: {ultimo_erro}"
+        
+        # Tenta pelo menos retornar coordenadas básicas do estado
+        if len(cep_clean) >= 2:
+            # Primeiros 2 dígitos indicam a região
+            estado_por_cep = {
+                '01': 'SP', '02': 'SP', '03': 'SP', '04': 'SP', '05': 'SP',
+                '06': 'SP', '07': 'SP', '08': 'SP', '09': 'SP', '10': 'SP',
+                '11': 'SP', '12': 'SP', '13': 'SP', '14': 'SP', '15': 'SP',
+                '16': 'SP', '17': 'SP', '18': 'SP', '19': 'SP',
+                '20': 'RJ', '21': 'RJ', '22': 'RJ', '23': 'RJ', '24': 'RJ',
+                '25': 'RJ', '26': 'RJ', '27': 'ES', '28': 'ES', '29': 'ES',
+                '30': 'MG', '31': 'MG', '32': 'MG', '33': 'MG', '34': 'MG',
+                '35': 'MG', '36': 'MG', '37': 'MG', '38': 'MG', '39': 'MG',
+                '40': 'BA', '41': 'BA', '42': 'BA', '43': 'BA', '44': 'BA',
+                '45': 'BA', '46': 'BA', '47': 'BA', '48': 'BA',
+                '49': 'MG', '50': 'PE', '51': 'PE', '52': 'PE', '53': 'PE',
+                '54': 'PE', '55': 'PE', '56': 'PE', '57': 'AL', '58': 'PB',
+                '59': 'RN', '60': 'CE', '61': 'CE', '62': 'CE', '63': 'CE',
+                '64': 'PI', '65': 'MT', '66': 'MT', '67': 'MT', '68': 'AC',
+                '69': 'RO', '70': 'DF', '71': 'DF', '72': 'GO', '73': 'GO',
+                '74': 'GO', '75': 'GO', '76': 'GO', '77': 'TO', '78': 'MT',
+                '79': 'MS', '80': 'PR', '81': 'PR', '82': 'PR', '83': 'PR',
+                '84': 'PR', '85': 'PR', '86': 'PR', '87': 'PR', '88': 'SC',
+                '89': 'SC', '90': 'RS', '91': 'RS', '92': 'RS', '93': 'RS',
+                '94': 'RS', '95': 'RS', '96': 'RS', '97': 'RS', '98': 'RS',
+                '99': 'RS'
+            }
+            
+            prefixo_cep = cep_clean[:2]
+            if prefixo_cep in estado_por_cep:
+                uf = estado_por_cep[prefixo_cep]
+                coordenadas = cidade_para_coordenadas("", uf)
+                if coordenadas:
+                    endereco_fallback = {
+                        'rua': f"Região do CEP {cep_clean[:5]}-{cep_clean[5:]}",
+                        'bairro': "Região aproximada",
+                        'cidade': "Não identificada",
+                        'uf': uf,
+                        'cep': cep_clean,
+                        'complemento': "Dados aproximados",
+                        'ddd': ""
+                    }
+                    st.warning(f"⚠️ Usando localização aproximada baseada no CEP (Estado: {uf})")
+                    return coordenadas[0], coordenadas[1], endereco_fallback, None
+        
+        return None, None, None, erro_msg
+    
+    return None, None, None, "Erro inesperado no processamento"
 
 def formatar_endereco(endereco_info):
     """Formata o endereço de forma elegante"""
