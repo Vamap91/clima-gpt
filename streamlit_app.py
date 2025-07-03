@@ -694,13 +694,24 @@ def main():
     
     with tab3:
         st.markdown("**Selecione uma cidade:**")
-        cidade = st.selectbox("Cidade", [
+        cidades_disponiveis = [
             "São Paulo", "Rio de Janeiro", "Brasília", "Belo Horizonte",
             "Fortaleza", "Salvador", "Curitiba", "Recife", "Porto Alegre",
-            "Manaus", "Belém", "Goiânia", "Campinas", "Florianópolis"
-        ])
+            "Manaus", "Belém", "Goiânia", "Campinas", "Florianópolis",
+            "Guarulhos", "São Gonçalo", "Duque de Caxias", "Nova Iguaçu",
+            "São Bernardo do Campo", "Osasco", "Santo André", "Jaboatão dos Guararapes",
+            "Contagem", "São Luís", "João Pessoa", "Teresina", "Natal",
+            "Campo Grande", "Cuiabá", "Maceió", "Vitória", "Aracaju",
+            "Palmas", "Macapá", "Boa Vista", "Rio Branco", "Porto Velho"
+        ]
         
-        search_cidade = st.button("🔍 Buscar", key="search_cidade", type="primary")
+        cidade = st.selectbox("Cidade", cidades_disponiveis, key="cidade_select")
+        
+        col1, col2 = st.columns([1, 2])
+        with col1:
+            search_cidade = st.button("🔍 Buscar", key="search_cidade", type="primary")
+        with col2:
+            st.markdown("*Todas as cidades funcionam offline*")
     
     st.markdown('</div>', unsafe_allow_html=True)
     
@@ -766,16 +777,29 @@ def main():
     
     # Processamento cidade
     if search_cidade and cidade:
-        coordenadas = cidade_para_coordenadas(cidade, "")
-        if coordenadas:
-            lat, lon = coordenadas
-            
-            with st.spinner("🌤️ Obtendo dados do clima..."):
-                clima = get_weather_fallback(lat, lon)
-                clima["cidade"] = cidade  # Sobrescreve com o nome correto
-                st.session_state.clima = clima
-                st.session_state.coordenadas = (lat, lon)
-                st.rerun()
+        try:
+            coordenadas = cidade_para_coordenadas(cidade, "")
+            if coordenadas:
+                lat, lon = coordenadas
+                
+                with st.spinner("🌤️ Obtendo dados do clima..."):
+                    clima = get_weather_fallback(lat, lon)
+                    clima["cidade"] = cidade  # Sobrescreve com o nome correto
+                    st.session_state.clima = clima
+                    st.session_state.coordenadas = (lat, lon)
+                    st.rerun()
+            else:
+                st.error(f"❌ Não foi possível encontrar coordenadas para {cidade}")
+        except Exception as e:
+            st.error(f"❌ Erro ao buscar cidade: {str(e)}")
+            # Fallback: usar coordenadas padrão de São Paulo
+            st.warning("🔄 Usando coordenadas de São Paulo como fallback")
+            lat, lon = -23.5505, -46.6333
+            clima = get_weather_fallback(lat, lon)
+            clima["cidade"] = "São Paulo (fallback)"
+            st.session_state.clima = clima
+            st.session_state.coordenadas = (lat, lon)
+            st.rerun()
     
     # Exibição dos dados do clima
     if 'clima' in st.session_state:
