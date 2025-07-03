@@ -463,4 +463,522 @@ def buscar_cep_completo(cep):
                     'cidade': "Localização aproximada",
                     'uf': uf,
                     'cep': cep_clean,
-                    'complemento': "Dados a
+                    'complemento': "Dados aproximados",
+                    'ddd': ""
+                }
+                st.warning(f"⚠️ Usando localização aproximada baseada no CEP (Estado: {uf})")
+                return coords[0], coords[1], endereco_fallback, None
+    
+    return None, None, None, "Não foi possível obter coordenadas do CEP usando nenhuma API"
+
+def get_weather_fallback(latitude, longitude):
+    """Obtém dados do clima usando múltiplas APIs"""
+    weather_key = get_api_keys()[1]
+    
+    if weather_key:
+        try:
+            url = f"http://api.weatherapi.com/v1/current.json?key={weather_key}&q={latitude},{longitude}&aqi=no"
+            response = safe_request(url)
+            
+            if response:
+                data = response.json()
+                if "current" in data and "location" in data:
+                    return {
+                        "temperatura": data["current"]["temp_c"],
+                        "umidade": data["current"]["humidity"],
+                        "vento_kmh": data["current"]["wind_kph"],
+                        "descricao": data["current"]["condition"]["text"],
+                        "cidade": data["location"]["name"],
+                        "pais": data["location"]["country"],
+                        "sensacao": data["current"]["feelslike_c"],
+                        "timestamp": datetime.now().strftime("%H:%M:%S"),
+                        "fallback": False
+                    }
+        except Exception as e:
+            st.warning(f"⚠️ WeatherAPI falhou: {str(e)}")
+    
+    # Fallback com dados baseados em coordenadas
+    weather_fallback = {
+        "temperatura": 23.5,
+        "umidade": 65,
+        "vento_kmh": 15.2,
+        "descricao": "Parcialmente nublado",
+        "cidade": f"Lat: {latitude:.2f}, Lon: {longitude:.2f}",
+        "pais": "Brasil",
+        "sensacao": 25.0,
+        "timestamp": datetime.now().strftime("%H:%M:%S"),
+        "fallback": True
+    }
+    
+    # Estimativa baseada em latitude
+    if latitude < -30:
+        weather_fallback.update({"temperatura": 18.0, "descricao": "Clima temperado"})
+    elif latitude < -15:
+        weather_fallback.update({"temperatura": 24.0, "descricao": "Clima tropical"})
+    else:
+        weather_fallback.update({"temperatura": 28.0, "descricao": "Clima quente"})
+    
+    return weather_fallback
+
+def interpretar_clima(weather_data):
+    """Gera recomendações usando OpenAI com fallback"""
+    openai_key = get_api_keys()[0]
+    
+    # Fallback com recomendações baseadas em regras
+    def recomendacoes_fallback(temp, umidade, vento, descricao):
+        recomendacoes = f"""
+## 🧥 ROUPAS RECOMENDADAS
+
+**Para {temp}°C:**
+"""
+        
+        if temp < 15:
+            recomendacoes += """
+- Casaco pesado ou jaqueta
+- Calça comprida
+- Sapatos fechados
+- Cachecol e gorro se necessário
+"""
+        elif temp < 22:
+            recomendacoes += """
+- Casaco leve ou blusa de manga longa
+- Calça ou bermuda
+- Sapatos fechados ou tênis
+"""
+        elif temp < 28:
+            recomendacoes += """
+- Camiseta ou blusa leve
+- Shorts ou calça leve
+- Sapatos abertos ou tênis
+"""
+        else:
+            recomendacoes += """
+- Roupas leves e claras
+- Shorts e camiseta
+- Sandálias ou sapatos ventilados
+- Protetor solar
+"""
+        
+        recomendacoes += f"""
+
+## 🏠 AR-CONDICIONADO RESIDENCIAL
+- Temperatura recomendada: **{max(18, min(26, temp - 2))}°C**
+- Umidade atual: {umidade}% {"(ideal: 50-60%)" if umidade < 50 or umidade > 60 else "(ideal)"}
+
+## 🚗 AR-CONDICIONADO AUTOMOTIVO
+- Temperatura recomendada: **{max(18, min(24, temp - 3))}°C**
+- Use ar externo se a temperatura externa for agradável
+- Recirculação interno se muito quente ou frio
+
+## 👶 CUIDADOS COM BEBÊS
+- Vista o bebê com uma camada a mais que você usaria
+- AC para bebês: **{max(20, min(24, temp - 1))}°C**
+- Mantenha umidade entre 40-60%
+- Evite correntes de ar diretas
+"""
+        
+        return recomendacoes
+    
+    # Tenta usar OpenAI
+    if openai_key:
+        try:
+            client = OpenAI(api_key=openai_key)
+            
+            prompt = f"""Você é um assistente especialista em conforto térmico e saúde. Dê conselhos precisos e práticos.
+
+CLIMA ATUAL: {weather_data['temperatura']}°C, sensação térmica de {weather_data['sensacao']}°C. 
+Condição: {weather_data['descricao']}. Umidade: {weather_data['umidade']}%. Vento: {weather_data['vento_kmh']} km/h.
+
+FORNEÇA RECOMENDAÇÕES ESPECÍFICAS:
+
+## 🧥 ROUPAS RECOMENDADAS
+- Exatamente o que vestir agora para este clima
+- Tecidos e camadas ideais
+
+## 🏠 AR-CONDICIONADO RESIDENCIAL
+- Temperatura EXATA recomendada
+- Configurações de umidade se necessário
+
+## 🚗 AR-CONDICIONADO AUTOMOTIVO
+- Temperatura EXATA recomendada
+- Usar recirculação ou ar externo
+
+## 👶 CUIDADOS COM BEBÊS
+- Como vestir bebês neste clima
+- Temperatura ideal do AC para ambientes com bebês
+- Cuidados específicos de ventilação e umidade
+
+Use linguagem clara e direta. Seja específico com temperaturas e instruções."""
+
+            resposta = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=800,
+                temperature=0.7
+            )
+            return resposta.choices[0].message.content.strip()
+        
+        except Exception as e:
+            st.warning(f"⚠️ OpenAI API falhou: {str(e)}. Usando recomendações baseadas em regras.")
+    
+    # Fallback para recomendações baseadas em regras
+    return recomendacoes_fallback(
+        weather_data['temperatura'],
+        weather_data['umidade'],
+        weather_data['vento_kmh'],
+        weather_data['descricao']
+    )
+
+def main():
+    # Header principal
+    st.markdown("""
+    <div class="main-header">
+        <h1>🌡️ Smart Clima</h1>
+        <p>Assistente Inteligente de Conforto Térmico</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Sidebar com diagnósticos
+    with st.sidebar:
+        st.markdown("### 🔧 Diagnósticos do Sistema")
+        
+        # Teste de conectividade
+        with st.expander("🔌 Teste de Conectividade"):
+            if st.button("Testar Conexão"):
+                is_connected, working_urls = test_connectivity()
+                if is_connected:
+                    st.success(f"✅ Conectado! URLs funcionando: {len(working_urls)}")
+                else:
+                    st.error("❌ Sem conexão com a internet")
+        
+        # Status das APIs
+        st.markdown("### 📊 Status das APIs")
+        openai_key, weather_key = get_api_keys()
+        st.markdown(f"**OpenAI:** {'✅ Configurada' if openai_key else '❌ Não configurada'}")
+        st.markdown(f"**Weather:** {'✅ Configurada' if weather_key else '❌ Não configurada'}")
+        
+        if not openai_key:
+            st.warning("⚠️ OpenAI não configurada. Usando recomendações baseadas em regras.")
+        
+        if not weather_key:
+            st.warning("⚠️ Weather API não configurada. Usando dados estimados.")
+        
+        # Informações sobre cidades disponíveis
+        st.markdown("### 🏙️ Cidades Disponíveis")
+        st.markdown(f"**Total:** {len(COORDENADAS_CIDADES)} cidades")
+        st.markdown("**Todas funcionam offline!**")
+    
+    # Seção de entrada
+    st.markdown('<div class="input-section">', unsafe_allow_html=True)
+    st.markdown("### 📍 Informe sua localização")
+    
+    # Tabs para diferentes tipos de entrada
+    tab1, tab2, tab3 = st.tabs(["🏠 Por CEP", "🌐 Por Coordenadas", "🏙️ Por Cidade"])
+    
+    with tab1:
+        st.markdown("**Digite seu CEP (apenas números):**")
+        cep = st.text_input("CEP", placeholder="Ex: 01310100", key="cep_input")
+        
+        col1, col2 = st.columns([1, 3])
+        with col1:
+            search_cep = st.button("🔍 Buscar", key="search_cep", type="primary")
+        with col2:
+            if st.button("📋 Usar CEP exemplo (São Paulo)", key="example_cep"):
+                st.session_state.cep_input = "01310100"
+                st.rerun()
+    
+    with tab2:
+        st.markdown("**Digite as coordenadas:**")
+        col1, col2 = st.columns(2)
+        with col1:
+            latitude = st.text_input("Latitude", placeholder="Ex: -23.550520", key="lat_input")
+        with col2:
+            longitude = st.text_input("Longitude", placeholder="Ex: -46.633308", key="lon_input")
+        
+        col1, col2 = st.columns([1, 3])
+        with col1:
+            search_coords = st.button("🔍 Buscar", key="search_coords", type="primary")
+        with col2:
+            if st.button("📋 Usar coordenadas exemplo", key="example_coords"):
+                st.session_state.lat_input = "-23.550520"
+                st.session_state.lon_input = "-46.633308"
+                st.rerun()
+    
+    with tab3:
+        st.markdown("**Selecione uma cidade:**")
+        cidades_disponiveis = list(COORDENADAS_CIDADES.keys())
+        cidades_disponiveis.sort()  # Ordena alfabeticamente
+        
+        cidade = st.selectbox("Cidade", cidades_disponiveis, key="cidade_select")
+        
+        col1, col2 = st.columns([1, 2])
+        with col1:
+            search_cidade = st.button("🔍 Buscar", key="search_cidade", type="primary")
+        with col2:
+            st.markdown("*Todas as cidades funcionam offline*")
+    
+    st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Processamento CEP
+    if search_cep and cep:
+        with st.spinner("🔍 Buscando localização via CEP..."):
+            lat, lon, endereco_info, error = buscar_cep_completo(cep)
+            
+            if error:
+                st.markdown(f'<div class="error-message">❌ {error}</div>', unsafe_allow_html=True)
+                st.markdown("""
+                <div class="fallback-section">
+                    <h4>💡 Alternativas:</h4>
+                    <ul>
+                        <li>Tente usar coordenadas diretamente</li>
+                        <li>Selecione uma cidade próxima na aba "Por Cidade"</li>
+                        <li>Verifique se o CEP está correto</li>
+                    </ul>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                # Exibe o endereço encontrado
+                if endereco_info:
+                    endereco_formatado = formatar_endereco(endereco_info)
+                    st.markdown(f"""
+                    <div class="success-message">
+                        <h4>✅ Endereço encontrado:</h4>
+                        <p><strong>{endereco_formatado}</strong></p>
+                        <p>Coordenadas: {lat}, {lon}</p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                else:
+                    st.markdown(f'<div class="success-message">✅ Coordenadas encontradas: {lat}, {lon}</div>', unsafe_allow_html=True)
+                
+                with st.spinner("🌤️ Obtendo dados do clima..."):
+                    clima = get_weather_fallback(lat, lon)
+                    
+                    # Adiciona informações do endereço ao clima
+                    if endereco_info:
+                        clima["endereco"] = endereco_info
+                        clima["endereco_formatado"] = endereco_formatado
+                        # Usa o nome da cidade do CEP se disponível
+                        if endereco_info.get('cidade'):
+                            clima["cidade"] = endereco_info['cidade']
+                    
+                    st.session_state.clima = clima
+                    st.session_state.coordenadas = (lat, lon)
+                    st.rerun()
+    
+    # Processamento coordenadas
+    if search_coords and latitude and longitude:
+        try:
+            lat = float(latitude)
+            lon = float(longitude)
+            
+            # Validação básica das coordenadas
+            if not (-90 <= lat <= 90) or not (-180 <= lon <= 180):
+                st.error("❌ Coordenadas inválidas. Latitude: -90 a 90, Longitude: -180 a 180")
+            else:
+                with st.spinner("🌤️ Obtendo dados do clima..."):
+                    clima = get_weather_fallback(lat, lon)
+                    st.session_state.clima = clima
+                    st.session_state.coordenadas = (lat, lon)
+                    st.rerun()
+        except ValueError:
+            st.markdown('<div class="error-message">❌ Coordenadas inválidas. Use formato numérico.</div>', unsafe_allow_html=True)
+    
+    # Processamento cidade
+    if search_cidade and cidade:
+        try:
+            st.info(f"🔍 Buscando coordenadas para: {cidade}")
+            
+            # Busca coordenadas usando a função robusta
+            coordenadas = buscar_coordenadas_por_nome(cidade)
+            
+            if coordenadas:
+                lat, lon = coordenadas
+                
+                with st.spinner("🌤️ Obtendo dados do clima..."):
+                    clima = get_weather_fallback(lat, lon)
+                    clima["cidade"] = cidade  # Usa o nome selecionado
+                    st.session_state.clima = clima
+                    st.session_state.coordenadas = (lat, lon)
+                    st.rerun()
+            else:
+                st.error(f"❌ Não foi possível encontrar coordenadas para {cidade}")
+                st.info("💡 Isso não deveria acontecer. Verifique se a cidade está na lista.")
+                
+        except Exception as e:
+            st.error(f"❌ Erro ao buscar cidade: {str(e)}")
+            # Fallback: usar São Paulo
+            st.warning("🔄 Usando São Paulo como fallback")
+            lat, lon = -23.5505, -46.6333
+            clima = get_weather_fallback(lat, lon)
+            clima["cidade"] = "São Paulo (fallback)"
+            st.session_state.clima = clima
+            st.session_state.coordenadas = (lat, lon)
+            st.rerun()
+    
+    # Exibição dos dados do clima
+    if 'clima' in st.session_state:
+        clima = st.session_state.clima
+        
+        # Aviso se usando dados de fallback
+        if clima.get("fallback", False):
+            st.markdown("""
+            <div class="diagnostic-card">
+                <h4>⚠️ Modo Offline</h4>
+                <p>Usando dados estimados baseados na localização. Para dados precisos, verifique sua conexão e configure as APIs.</p>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        # Card do clima com endereço
+        clima_header = f"🌤️ Clima em {clima['cidade']}, {clima['pais']}"
+        
+        # Se tiver endereço do CEP, exibe informações mais detalhadas
+        if clima.get('endereco'):
+            endereco_info = clima['endereco']
+            
+            st.markdown(f"""
+            <div class="weather-card">
+                <h2>{clima_header}</h2>
+                <div style="background: rgba(255,255,255,0.1); padding: 1rem; border-radius: 8px; margin: 1rem 0;">
+                    <h4>📍 Endereço Completo:</h4>
+                    <p><strong>{clima.get('endereco_formatado', '')}</strong></p>
+                    {f"<p>🏠 <strong>Rua:</strong> {endereco_info.get('rua', 'Não disponível')}</p>" if endereco_info.get('rua') else ""}
+                    {f"<p>🏘️ <strong>Bairro:</strong> {endereco_info.get('bairro', 'Não disponível')}</p>" if endereco_info.get('bairro') else ""}
+                    {f"<p>📞 <strong>DDD:</strong> {endereco_info.get('ddd', 'Não disponível')}</p>" if endereco_info.get('ddd') else ""}
+                </div>
+                <p>Última atualização: {clima['timestamp']}</p>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown(f"""
+            <div class="weather-card">
+                <h2>{clima_header}</h2>
+                <p>Última atualização: {clima['timestamp']}</p>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        # Métricas do clima
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("🌡️ Temperatura", f"{clima['temperatura']}°C", 
+                     delta=f"Sensação: {clima['sensacao']}°C")
+        
+        with col2:
+            st.metric("💧 Umidade", f"{clima['umidade']}%")
+        
+        with col3:
+            st.metric("💨 Vento", f"{clima['vento_kmh']} km/h")
+        
+        with col4:
+            st.metric("☁️ Condição", clima['descricao'])
+        
+        # Seção de recomendações
+        st.markdown("""
+        <div class="recommendation-card">
+            <h3>🤖 Recomendações Personalizadas</h3>
+            <p>Obtenha recomendações inteligentes baseadas no clima atual</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        col1, col2 = st.columns([1, 3])
+        with col1:
+            generate_recommendations = st.button("🎯 Gerar Recomendações", type="primary")
+        with col2:
+            if 'recomendacoes' in st.session_state:
+                if st.button("🔄 Atualizar Recomendações"):
+                    del st.session_state.recomendacoes
+                    st.rerun()
+        
+        if generate_recommendations:
+            with st.spinner("🤖 Gerando recomendações..."):
+                recomendacoes = interpretar_clima(clima)
+                st.session_state.recomendacoes = recomendacoes
+                st.rerun()
+        
+        # Exibir recomendações
+        if 'recomendacoes' in st.session_state:
+            st.markdown("### 📋 Suas Recomendações")
+            st.markdown(st.session_state.recomendacoes)
+            
+            # Botão para salvar recomendações
+            endereco_completo = ""
+            if clima.get('endereco_formatado'):
+                endereco_completo = f"**Endereço:** {clima['endereco_formatado']}\n"
+            
+            st.download_button(
+                label="💾 Salvar Recomendações",
+                data=f"# Recomendações Smart Clima\n\n**Local:** {clima['cidade']}, {clima['pais']}\n{endereco_completo}**Data:** {datetime.now().strftime('%d/%m/%Y %H:%M')}\n**Temperatura:** {clima['temperatura']}°C\n**Modo:** {'Offline' if clima.get('fallback', False) else 'Online'}\n\n{st.session_state.recomendacoes}",
+                file_name=f"recomendacoes_clima_{datetime.now().strftime('%Y%m%d_%H%M')}.md",
+                mime="text/markdown"
+            )
+            
+            # Feedback do usuário
+            st.markdown("---")
+            st.markdown("### 📝 Feedback")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                if st.button("👍 Útil"):
+                    st.success("Obrigado pelo feedback!")
+            with col2:
+                if st.button("👎 Não útil"):
+                    st.info("Obrigado! Vamos melhorar.")
+            with col3:
+                if st.button("🔄 Gerar Novamente"):
+                    del st.session_state.recomendacoes
+                    st.rerun()
+    
+    # Seção de ajuda
+    if not st.session_state.get('clima'):
+        st.markdown("---")
+        st.markdown("### 🆘 Problemas de Conexão?")
+        
+        with st.expander("🔧 Soluções para Problemas Comuns"):
+            st.markdown("""
+            **Se não conseguir conectar:**
+            
+            1. **Verifique sua internet** - Teste acessando outros sites
+            2. **Use coordenadas** - Mais confiável que CEP
+            3. **Selecione uma cidade** - Funciona offline
+            4. **Aguarde um momento** - Algumas redes são mais lentas
+            
+            **APIs não configuradas:**
+            - OpenAI: Configure `OPENAI_API_KEY` para recomendações avançadas
+            - Weather: Configure `WEATHER_API_KEY` para dados precisos
+            
+            **Mesmo sem APIs, o app funciona com:**
+            - Dados climáticos estimados
+            - Recomendações baseadas em regras
+            - Múltiplas cidades brasileiras
+            """)
+        
+        st.markdown("### 🎯 Teste Rápido")
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🏙️ Testar com São Paulo", type="primary"):
+                clima = get_weather_fallback(-23.5505, -46.6333)
+                clima["cidade"] = "São Paulo"
+                st.session_state.clima = clima
+                st.rerun()
+        
+        with col2:
+            if st.button("🏖️ Testar com Rio de Janeiro", type="primary"):
+                clima = get_weather_fallback(-22.9068, -43.1729)
+                clima["cidade"] = "Rio de Janeiro"
+                st.session_state.clima = clima
+                st.rerun()
+        
+        # Mostrar cidades disponíveis
+        st.markdown("### 🏙️ Cidades Disponíveis")
+        with st.expander("Ver todas as cidades"):
+            cidades_organizadas = {}
+            for cidade in COORDENADAS_CIDADES.keys():
+                primeira_letra = cidade[0].upper()
+                if primeira_letra not in cidades_organizadas:
+                    cidades_organizadas[primeira_letra] = []
+                cidades_organizadas[primeira_letra].append(cidade)
+            
+            for letra in sorted(cidades_organizadas.keys()):
+                st.markdown(f"**{letra}:** {', '.join(sorted(cidades_organizadas[letra]))}")
+
+if __name__ == "__main__":
+    main()
